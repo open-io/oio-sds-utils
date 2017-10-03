@@ -44,22 +44,28 @@ def check_volume(volume_path):
 
 
 class Auditor(object):
-    def __init__(self, ns, addr, repair=False, optimize=False):
-        self.ns = ns
-        self.addr = addr
+    def __init__(self, vol, ns, addr, repair=False, optimize=False):
+        self.vol = str(vol)
+        self.ns = str(ns)
+        self.addr = str(addr)
         self.repair = bool(repair)
         self.optimize = bool(optimize)
         conf = {'namespace': ns}
         self.dir = DirectoryClient(conf)
+        # JFS: we turn each sequence of digits into a '*'
+        self.pattern = self.vol
+        while True:
+            p = re.sub('\\d+', '*', self.pattern, count=4)
+            if p == self.pattern:
+                break
+            self.pattern = p
 
     def copy_from(self, path, peers):
         for peer in (x for x in peers if x != self.addr):
             host, port = peer.split(':')
-            # JFS: we turn each sequence of digits into a '*'
             # Build a command that locate all the bases with a path that
             # has a common pattern with our local base.
-            dn, bn = os.path.dirname(path), os.path.basename(path)
-            src = os.path.join(re.sub('\\d+', '*', dn, count=4), bn)
+            src = str(path).replace(self.vol, self.pattern)
             src = '$(find ' + src + ' | grep -v ' + path + ' | head -n 1)'
             action = ' '.join(('/bin/cat', src))
 
@@ -133,7 +139,7 @@ if __name__ == '__main__':
     for repo in args.paths:
         srvns, srvaddr = check_volume(repo)
         print "#VOL", srvns, srvaddr, repo
-        auditor = Auditor(srvns, srvaddr,
+        auditor = Auditor(repo, srvns, srvaddr,
                           repair=args.repair, optimize=args.optimize)
         for root, dirs, files in os.walk(repo):
             if 'tmp' in dirs:
