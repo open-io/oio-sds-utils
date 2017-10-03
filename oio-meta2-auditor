@@ -19,7 +19,7 @@ import os
 import os.path
 import sqlite3
 import subprocess
-from sys import argv
+import argparse
 
 from oio.common.utils import read_user_xattr
 from oio.common.constants import volume_xattr_keys
@@ -44,21 +44,26 @@ def check_volume(volume_path):
 
 
 class Auditor(object):
-    def __init__(self, ns, addr):
+    def __init__(self, ns, addr, repair=False, optimize=False):
         self.ns = ns
         self.addr = addr
-        self.repair = True
-        self.optimize = False
+        self.repair = bool(repair)
+        self.optimize = bool(optimize)
         conf = {'namespace': ns}
         self.dir = DirectoryClient(conf)
 
     def copy_from(self, path, peers):
         for peer in (x for x in peers if x != self.addr):
             host, port = peer.split(':')
+            # JFS: we turn each sequence of digits into a '*'
+            # Build a command that locate all the bases with a path that
+            # has a common pattern with our local base.
             dn, bn = os.path.dirname(path), os.path.basename(path)
             src = os.path.join(re.sub('\\d+', '*', dn, count=4), bn)
             src = '$(find ' + src + ' | grep -v ' + path + ' | head -n 1)'
             action = ' '.join(('/bin/cat', src))
+
+            # then we try to reach the first peer that is answering
             args = ['ssh', '-n', '-A', '-p', str(22), host, action]
             with open(path, 'w') as f:
                 child = subprocess.Popen(args, close_fds=True, stdout=f)
@@ -113,10 +118,23 @@ class Auditor(object):
 
 
 if __name__ == '__main__':
-    for repo in argv[1:]:
+
+    descr = "Crawl the meta2 volumes and check the base are valid SQLite3" \
+            " files."
+    parser = argparse.ArgumentParser(description=descr)
+    parser.add_argument('--repair', action='store_true',
+                        help="Repair the broken bases from their replicas")
+    parser.add_argument('--optimize', action='store_true',
+                        help="Optimize the valid SQLite bases")
+    parser.add_argument('paths', metavar='PATH', type=str, nargs='+',
+                        help='The path to a meta2 volume')
+    args = parser.parse_args()
+
+    for repo in args.paths:
         srvns, srvaddr = check_volume(repo)
         print "#VOL", srvns, srvaddr, repo
-        auditor = Auditor(srvns, srvaddr)
+        auditor = Auditor(srvns, srvaddr,
+                          repair=args.repair, optimize=args.optimize)
         for root, dirs, files in os.walk(repo):
             if 'tmp' in dirs:
                 dirs.remove('tmp')
