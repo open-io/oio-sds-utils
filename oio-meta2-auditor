@@ -1,0 +1,127 @@
+#!/usr/bin/env python
+# Copyright (C) 2017 OpenIO SAS, as part of OpenIO SDS
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import re
+import os
+import os.path
+import sqlite3
+import subprocess
+from sys import argv
+
+from oio.common.utils import read_user_xattr
+from oio.common.constants import volume_xattr_keys
+
+from oio.common import exceptions as exc
+from oio.directory.client import DirectoryClient
+
+
+EXTENSION = '-bak'
+
+
+def check_volume(volume_path):
+    meta = read_user_xattr(volume_path)
+    server_type = meta.get(volume_xattr_keys['type'])
+    if server_type != 'meta2':
+        raise exc.OioException('Invalid volume path')
+    namespace = meta.get(volume_xattr_keys['namespace'])
+    server_id = meta.get(volume_xattr_keys['id'])
+    if namespace is None or server_id is None:
+        raise exc.OioException('Invalid meta2 volume path')
+    return namespace, server_id
+
+
+class Auditor(object):
+    def __init__(self, ns, addr):
+        self.ns = ns
+        self.addr = addr
+        self.repair = True
+        self.optimize = False
+        conf = {'namespace': ns}
+        self.dir = DirectoryClient(conf)
+
+    def copy_from(self, path, peers):
+        for peer in (x for x in peers if x != self.addr):
+            host, port = peer.split(':')
+            dn, bn = os.path.dirname(path), os.path.basename(path)
+            src = os.path.join(re.sub('\\d+', '*', dn, count=4), bn)
+            src = '$(find ' + src + ' | grep -v ' + path + ' | head -n 1)'
+            action = ' '.join(('/bin/cat', src))
+            args = ['ssh', '-n', '-A', '-p', str(22), host, action]
+            with open(path, 'w') as f:
+                child = subprocess.Popen(args, close_fds=True, stdout=f)
+                child.wait()
+                print "#SSH", child.returncode, path, ' '.join(args)
+                if child.returncode == 0:
+                    return
+        raise Exception("No save succeeded")
+
+    def repair_container(self, path):
+        bn = os.path.basename(path)
+        cid, seq, srvtype = bn.split('.')
+        seq = int(seq)
+
+        # Locate the peers of the base
+        links = self.dir.show(cid=cid)
+        meta2 = set(x['host'] for x in links['srv']
+                    if x['type'] == srvtype and x['seq'] == seq)
+        if self.addr not in meta2:
+            raise Exception("Orphan base")
+        else:
+            meta2.remove(self.addr)
+            if len(meta2) <= 0:
+                raise Exception("No peer located")
+
+        # Repair sequence
+        os.rename(path, path + EXTENSION)
+        try:
+            self.copy_from(path, meta2)
+        except:
+            os.rename(path + EXTENSION, path)
+            raise
+
+    def audit_container(self, path):
+        try:
+            with sqlite3.connect(path) as conn:
+                conn.execute("PRAGMA integrity_check")
+                if self.optimize:
+                    conn.execute("VACUUM")
+                    conn.execute("PRAGMA optimize")
+                    print "#OPTIMIZED", path
+                else:
+                    print "#OK", path
+        except sqlite3.DatabaseError as e:
+            print "#CORRUPTED", path, str(e)
+            if self.repair:
+                try:
+                    self.repair_container(path)
+                    print "#REPAIRED", path
+                except Exception as e:
+                    print "#FAILED", path, str(e)
+
+
+if __name__ == '__main__':
+    for repo in argv[1:]:
+        srvns, srvaddr = check_volume(repo)
+        print "#VOL", srvns, srvaddr, repo
+        auditor = Auditor(srvns, srvaddr)
+        for root, dirs, files in os.walk(repo):
+            if 'tmp' in dirs:
+                dirs.remove('tmp')
+            for name in files:
+                if name.endswith(EXTENSION):
+                    continue
+                path = os.path.join(root, name)
+                auditor.audit_container(path)
