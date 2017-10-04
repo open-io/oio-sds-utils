@@ -70,7 +70,9 @@ class Auditor(object):
             action = ' '.join(('/bin/cat', src))
 
             # then we try to reach the first peer that is answering
-            args = ['ssh', '-n', '-A', '-p', str(22), host, action]
+            args = ['ssh',
+                    '-o', 'StrictHostKeyChecking=no', '-n', '-A',
+                    '-p', str(22), host, action]
             with open(path, 'w') as f:
                 child = subprocess.Popen(args, close_fds=True, stdout=f)
                 child.wait()
