@@ -123,11 +123,37 @@ class Auditor(object):
                     print "#FAILED", path, str(e)
 
 
+def audit_directory(path):
+    srvns, srvaddr = check_volume(repo)
+    print "#VOL", srvns, srvaddr, repo
+    auditor = Auditor(repo, srvns, srvaddr,
+                      repair=args.repair, optimize=args.optimize)
+    for root, dirs, files in os.walk(repo):
+        if 'tmp' in dirs:
+            dirs.remove('tmp')
+        for name in files:
+            if name.endswith(EXTENSION):
+                continue
+            path = os.path.join(root, name)
+            auditor.audit_container(path)
+
+
+def audit_file(path, args):
+    srvns, srvaddr = check_volume(args.repo)
+    print "#VOL", srvns, srvaddr, repo
+    auditor = Auditor(repo, srvns, srvaddr,
+                      repair=args.repair, optimize=args.optimize)
+    auditor.audit_container(path)
+
+
 if __name__ == '__main__':
 
     descr = "Crawl the meta2 volumes and check the base are valid SQLite3" \
             " files."
     parser = argparse.ArgumentParser(description=descr)
+    parser.add_argument('--repo', action='store',
+                        help="When files are configured, explicit the "
+                             "repository the files belong to.")
     parser.add_argument('--repair', action='store_true',
                         help="Repair the broken bases from their replicas")
     parser.add_argument('--optimize', action='store_true',
@@ -137,15 +163,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     for repo in args.paths:
-        srvns, srvaddr = check_volume(repo)
-        print "#VOL", srvns, srvaddr, repo
-        auditor = Auditor(repo, srvns, srvaddr,
-                          repair=args.repair, optimize=args.optimize)
-        for root, dirs, files in os.walk(repo):
-            if 'tmp' in dirs:
-                dirs.remove('tmp')
-            for name in files:
-                if name.endswith(EXTENSION):
-                    continue
-                path = os.path.join(root, name)
-                auditor.audit_container(path)
+        if os.path.isdir(repo):
+            audit_directory(repo)
+        elif os.path.isfile(repo):
+            audit_file(repo, args)
+        else:
+            print "#WTF", repo
