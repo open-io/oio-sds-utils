@@ -1,19 +1,22 @@
 #!/usr/bin/env python
 
 from os import makedirs
-from os.path import dirname
+from os.path import dirname, exists
 from sys import argv
 from sqlite3 import connect
 from itertools import product
 from traceback import print_exc
 from sys import stderr
+import argparse
 
 from oio.common.utils import cid_from_name
 
 
+hexa = "0123456789abcdef"
+
 nb_xdigits = 2
-# The case matters
-hexa = "012345678abcdef"
+flag_prune = False
+flag_vacuum = False
 
 
 def prefixes():
@@ -42,17 +45,41 @@ def prune_database(db, cname, cid, prefix):
     tnx.execute("UPDATE admin SET v = ? WHERE k = 'sys.user.name'", (cname, ))
     tnx.execute("UPDATE admin SET v = ? WHERE k = 'sys.name'", (cid + '.1', ))
     # TODO(jfs): Drop the FROZEN flag
-    tnx.execute("DELETE FROM aliases WHERE alias NOT LIKE 'cloud_images/{0}%'".format(prefix))
-    tnx.execute("DELETE FROM contents WHERE id NOT IN (SELECT DISTINCT content FROM aliases)")
-    tnx.execute("DELETE FROM properties WHERE alias NOT IN (SELECT alias FROM aliases)")
-    tnx.execute("DELETE FROM chunks WHERE content NOT IN (SELECT id FROM contents)")
+    if flag_prune:
+        tnx.execute("DELETE FROM aliases WHERE alias NOT LIKE 'cloud_images/{0}%'".format(prefix))
+        tnx.execute("DELETE FROM contents WHERE id NOT IN (SELECT DISTINCT content FROM aliases)")
+        tnx.execute("DELETE FROM properties WHERE alias NOT IN (SELECT alias FROM aliases)")
+        tnx.execute("DELETE FROM chunks WHERE content NOT IN (SELECT id FROM contents)")
     db.commit()
-    db.execute("VACUUM")
+    if flag_vacuum:
+        db.execute("VACUUM")
 
 
 def main():
-    basedir = argv[1]
-    path = argv[2]
+    parser = argparse.ArgumentParser(description='Split a meta2 container')
+    parser.add_argument('--prune', dest='prune', default=False, action='store_true',
+                        help='Remove the contents not belonging to this container')
+    parser.add_argument('--vacuum', dest='vacuum', default=False, action='store_true',
+                        help='Vacuum the container at the end of the procedure')
+    parser.add_argument('--target', dest='target', type=str, default='/tmp/wrk',
+                        help='target directory for all the copies')
+    parser.add_argument('--digits', dest='xdigits', type=int, default=2,
+                        help='How many xdigits should be considered in the sharding')
+    parser.add_argument('container', metavar='<container>', type=str,
+                        help='The path to a container')
+    args = parser.parse_args()
+
+    basedir = args.target
+    path = args.container
+    global flag_vacuum
+    global flag_prune
+    global nb_xdigits
+    flag_vacuum = args.vacuum
+    flag_prune = args.prune
+    nb_xdigits = args.xdigits
+
+    if not exists(path):
+        raise Exception("DB not found")
 
     acct, cname = None, None
     with connect(path) as db:
