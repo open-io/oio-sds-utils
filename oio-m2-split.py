@@ -33,7 +33,7 @@ def whois(db):
 
 
 def compute_new_cname(acct, cname, prefix):
-    return acct, cname + '/' + prefix
+    return acct, ''.join([cname, prefix])
 
 
 def prune_database(db, cname, cid, prefix):
@@ -56,8 +56,7 @@ def prune_database(db, cname, cid, prefix):
 
 def sharded_container(basedir, acct, cname, path, as_prefix=""):
     for prefix in prefixes():
-        new_acct, new_cname = compute_new_cname(acct, cname,
-                                                ''.join([as_prefix, prefix]))
+        new_acct, new_cname = compute_new_cname(acct, cname, prefix)
         new_cid = cid_from_name(new_acct, new_cname)
         new_path = basedir + '/' + new_cid[0:3] + '/' + new_cid + '.1.meta2'
         logging.debug("%s %s %s %s", new_path, new_acct, new_cname, new_cid)
@@ -149,8 +148,8 @@ def main():
         return
     else:
         as_pre = cname[-nb_as_xdigits:]
-        logging.debug("%s %s %s %s", path, acct, cname[:-nb_as_xdigits-1], cid)
-        sharded_container(basedir, acct, cname[:-nb_as_xdigits-1], path, as_prefix=as_pre)
+        logging.debug("%s %s %s %s", path, acct, cname, cid)
+        sharded_container(basedir, acct, cname, path, as_prefix=as_pre)
 
 if __name__ == '__main__':
     main()
