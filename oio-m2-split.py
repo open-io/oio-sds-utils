@@ -37,6 +37,9 @@ def compute_new_cname(acct, cname, prefix):
 
 
 def prune_database(db, cname, cid, prefix):
+    db.execute("PRAGMA journal_mode = MEMORY")
+    db.execute("PRAGMA foreign_keys = FALSE")
+    db.execute("PRAGMA synchronous = OFF")
     tnx = db.cursor()
     tnx.execute("UPDATE admin SET v = ? WHERE k = 'sys.user.name'", (cname, ))
     tnx.execute("UPDATE admin SET v = ? WHERE k = 'sys.name'", (cid + '.1', ))
@@ -50,6 +53,9 @@ def prune_database(db, cname, cid, prefix):
         tnx.execute("DELETE FROM chunks "
                     "WHERE content NOT IN (SELECT id FROM contents)")
     tnx.execute("UPDATE admin SET v = 0 WHERE k = 'sys.status'")
+    tnx.execute("DELETE FROM admin WHERE k = 'sys.peers'")
+    tnx.execute("UPDATE admin SET v = (SELECT COUNT(*) FROM aliases) WHERE k = 'sys.m2.objects'")
+    tnx.execute("UPDATE admin SET v = (SELECT SUM(c.size) FROM contents c, aliases a WHERE c.id = a.content) WHERE k = 'sys.m2.usage'")
     db.commit()
     if flag_vacuum:
         db.execute("VACUUM")
