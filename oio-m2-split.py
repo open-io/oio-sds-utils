@@ -23,7 +23,6 @@ def prefixes():
     for prefix in product(*plop):
         yield ''.join(prefix)
 
-
 def whois(db):
     uname, aname = None, None
     for row in db.execute("SELECT v FROM admin WHERE k = 'sys.user.name'"):
@@ -41,7 +40,6 @@ def prune_database(db, cname, cid, prefix):
     tnx = db.cursor()
     tnx.execute("UPDATE admin SET v = ? WHERE k = 'sys.user.name'", (cname, ))
     tnx.execute("UPDATE admin SET v = ? WHERE k = 'sys.name'", (cid + '.1', ))
-    # TODO(jfs): Drop the FROZEN flag
     if flag_prune:
         tnx.execute("DELETE FROM aliases "
                     "WHERE alias NOT LIKE 'cloud_images/{0}%'".format(prefix))
@@ -51,9 +49,34 @@ def prune_database(db, cname, cid, prefix):
                     "WHERE alias NOT IN (SELECT alias FROM aliases)")
         tnx.execute("DELETE FROM chunks "
                     "WHERE content NOT IN (SELECT id FROM contents)")
+    tnx.execute("UPDATE admin SET v = 0 WHERE k = 'sys.status'")
     db.commit()
     if flag_vacuum:
         db.execute("VACUUM")
+
+def sharded_container(basedir, acct, cname, path, as_prefix=""):
+    for prefix in prefixes():
+        new_acct, new_cname = compute_new_cname(acct, cname,
+                                                ''.join([as_prefix, prefix]))
+        new_cid = cid_from_name(new_acct, new_cname)
+        new_path = basedir + '/' + new_cid[0:3] + '/' + new_cid + '.1.meta2'
+        logging.debug("%s %s %s %s", new_path, new_acct, new_cname, new_cid)
+
+        try:
+            makedirs(dirname(new_path))
+        except OSError:
+            pass
+
+        try:
+            from subprocess import check_call
+            check_call(["/bin/cp", "-p", path, new_path])
+            with connect(new_path) as db:
+                prune_database(db, new_cname, new_cid,
+                               ''.join([as_prefix, prefix]))
+            print new_acct, new_cname, new_cid
+        except Exception:
+            from traceback import print_exc
+            print_exc(file=stderr)
 
 
 def main():
@@ -75,6 +98,9 @@ def main():
     parser.add_argument('--digits', dest='xdigits',
                         type=int, default=2,
                         help='Set the sharding width (in number of chars)')
+    parser.add_argument('--already-sharded-digits', dest ='already_sharded_xdigits',
+                        type=int ,default=0,
+                        help='Set the sharding width of an already sharded container')
     parser.add_argument('container', metavar='<container>',
                         type=str,
                         help='The path to a container')
@@ -84,10 +110,11 @@ def main():
     global flag_vacuum
     global flag_prune
     global nb_xdigits
+    global nb_as_xdigits
     flag_vacuum = args.vacuum
     flag_prune = args.prune
     nb_xdigits = args.xdigits
-
+    nb_as_xdigits = args.already_sharded_xdigits
     # Configure the logging
     if args.verbose:
         logging.basicConfig(
@@ -114,30 +141,16 @@ def main():
         raise Exception("Container unknown")
     cid = cid_from_name(acct, cname)
     logging.debug("%s %s %s %s", path, acct, cname, cid)
-    if cname != 'cloud_images':
+    if cname.find('cloud_images') > 0:
         raise Exception("Container is not 'cloud_images'")
 
-    for prefix in prefixes():
-        new_acct, new_cname = compute_new_cname(acct, cname, prefix)
-        new_cid = cid_from_name(new_acct, new_cname)
-        new_path = basedir + '/' + new_cid[0:3] + '/' + new_cid + '.1.meta2'
-        logging.debug("%s %s %s %s", new_path, new_acct, new_cname, new_cid)
-
-        try:
-            makedirs(dirname(new_path))
-        except OSError:
-            pass
-
-        try:
-            from subprocess import check_call
-            check_call(["/bin/cp", "-p", path, new_path])
-            with connect(new_path) as db:
-                prune_database(db, new_cname, new_cid, prefix)
-            print new_acct, new_cname, new_cid
-        except Exception:
-            from traceback import print_exc
-            print_exc(file=stderr)
-
+    if nb_as_xdigits == 0:
+        shared_container(basedir, acct, cname, path)
+        return
+    else:
+        as_pre = cname[-nb_as_xdigits:]
+        logging.debug("%s %s %s %s", path, acct, cname[:-nb_as_xdigits-1], cid)
+        shared_container(basedir, acct, cname[:-nb_as_xdigits-1], path, as_prefix=as_pre)
 
 if __name__ == '__main__':
     main()
