@@ -145,12 +145,12 @@ def main():
         raise Exception("Container is not 'cloud_images'")
 
     if nb_as_xdigits == 0:
-        shared_container(basedir, acct, cname, path)
+        sharded_container(basedir, acct, cname, path)
         return
     else:
         as_pre = cname[-nb_as_xdigits:]
         logging.debug("%s %s %s %s", path, acct, cname[:-nb_as_xdigits-1], cid)
-        shared_container(basedir, acct, cname[:-nb_as_xdigits-1], path, as_prefix=as_pre)
+        sharded_container(basedir, acct, cname[:-nb_as_xdigits-1], path, as_prefix=as_pre)
 
 if __name__ == '__main__':
     main()
