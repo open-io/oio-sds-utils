@@ -21,7 +21,10 @@ import sqlite3
 import subprocess
 import argparse
 
-from oio.common.utils import read_user_xattr
+try:  # `oio` > 4.2.0
+    from oio.common.xattr import read_user_xattr
+except ImportError:
+    from oio.common.utils import read_user_xattr
 from oio.common.constants import volume_xattr_keys
 
 from oio.common import exceptions as exc
@@ -29,6 +32,7 @@ from oio.directory.client import DirectoryClient
 
 
 EXTENSION = '-bak'
+MANDATORY_FLAGS = ['sys.m2.init', 'sys.account', 'sys.type', 'sys.user.name']
 
 
 def check_volume(volume_path):
@@ -108,7 +112,12 @@ class Auditor(object):
     def audit_container(self, path):
         try:
             with sqlite3.connect(path) as conn:
-                conn.execute("PRAGMA integrity_check")
+                conn.execute("PRAGMA integrity_check").fetchone()
+                for mandatory_flag in MANDATORY_FLAGS:
+                    cursor = conn.execute("SELECT * FROM admin WHERE k=:flag",
+                                          {"flag": mandatory_flag})
+                    if cursor.fetchone() is None:
+                        raise sqlite3.DatabaseError()
                 if self.optimize:
                     conn.execute("VACUUM")
                     conn.execute("PRAGMA optimize")
