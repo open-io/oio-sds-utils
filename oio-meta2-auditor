@@ -32,7 +32,32 @@ from oio.directory.client import DirectoryClient
 
 
 EXTENSION = '-bak'
-MANDATORY_FLAGS = ['sys.m2.init', 'sys.account', 'sys.type', 'sys.user.name']
+MANDATORY_FLAGS = [
+    'schema_version',
+    'sys.account',
+    'sys.m2.ctime',
+    'sys.m2.init',
+    'sys.m2.objects',
+    'sys.m2.usage',
+    'sys.m2.version',
+    'sys.name',
+    'sys.ns',
+    'sys.peers',
+    'sys.type',
+    'sys.user.name',
+    'sys.user.type',
+    'version:main.admin',
+    'version:main.aliases',
+    'version:main.chunks',
+    'version:main.contents',
+    'version:main.properties',
+]
+JOIN_REQS = [
+    "SELECT COUNT(*) FROM chunks WHERE content NOT IN (SELECT DISTINCT id FROM contents)",
+    "SELECT COUNT(*) FROM contents WHERE id NOT IN (SELECT DISTINCT content FROM chunks)",
+    "SELECT COUNT(*) FROM aliases WHERE content NOT IN (SELECT DISTINCT id FROM contents)",
+    "SELECT COUNT(*) FROM contents WHERE id NOT IN (SELECT DISTINCT content FROM aliases)",
+]
 
 
 def check_volume(volume_path):
@@ -110,6 +135,7 @@ class Auditor(object):
             raise
 
     def audit_container(self, path):
+        errors = list()
         try:
             with sqlite3.connect(path) as conn:
                 conn.execute("PRAGMA integrity_check").fetchone()
@@ -117,21 +143,36 @@ class Auditor(object):
                     cursor = conn.execute("SELECT * FROM admin WHERE k=:flag",
                                           {"flag": mandatory_flag})
                     if cursor.fetchone() is None:
-                        raise sqlite3.DatabaseError()
-                if self.optimize:
-                    conn.execute("VACUUM")
-                    conn.execute("PRAGMA optimize")
-                    print "#OPTIMIZED", path
-                else:
-                    print "#OK", path
-        except sqlite3.DatabaseError as e:
-            print "#CORRUPTED", path, str(e)
+                        errors.append(
+                            "Missing mandatory flag (%s)" % mandatory_flag)
+                for join_req in JOIN_REQS:
+                    cursor = conn.execute(join_req)
+                    count = cursor.fetchone()[0]
+                    if count:
+                        errors.append(
+                            "Orphan entries (%s => %d)" % (join_req, count))
+        except sqlite3.DatabaseError as exc:
+            errors.append(str(exc))
+
+        if errors:
+            print "#CORRUPTED", path, str(errors)
             if self.repair:
                 try:
                     self.repair_container(path)
                     print "#REPAIRED", path
                 except Exception as e:
                     print "#FAILED", path, str(e)
+            return
+
+        try:
+            if self.optimize:
+                conn.execute("VACUUM")
+                conn.execute("PRAGMA optimize")
+                print "#OPTIMIZED", path
+            else:
+                print "#OK", path
+        except sqlite3.DatabaseError as exc:
+            print "#CORRUPTED", path, str(e)
 
 
 def audit_directory(path):
