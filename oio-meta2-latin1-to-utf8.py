@@ -1,0 +1,54 @@
+#!/usr/bin/python
+
+import argparse
+import sqlite3
+
+
+def find_broken_aliases(db):
+    fixed = list()
+    cur = db.execute('select alias,version,hex(content) from aliases')
+    for row in cur:
+        try:
+            if not isinstance(row[0], unicode):
+                str(row[0]).decode('utf8')
+        except UnicodeDecodeError:
+            version, content_id = row[1:3]
+            try:
+                new_alias = unicode(row[0], 'latin1')
+                fixed.append((row[0], version, content_id, new_alias))
+            except UnicodeDecodeError as exc:
+                print ('Failed to decode content with id %s and version %d to '
+                       'either utf8 or latin1: %s') % (
+                            content_id, version, exc)
+    cur.close()
+    return fixed
+
+
+def fix_broken_aliases(db, fixed):
+    with db:
+        cur = db.cursor()
+        for row in fixed:
+            cur.execute(
+                'UPDATE aliases set alias=? WHERE alias=? and version=?',
+                (row[3], row[0], row[1]))
+        cur.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Convert latin1 aliases to utf8')
+    parser.add_argument('database', help='Path to database to fix')
+    parser.add_argument('--dry-run', help='Only list latin1 aliases',
+                        action='store_true')
+    args = parser.parse_args()
+    db = sqlite3.connect(args.database)
+    fixable = find_broken_aliases(db)
+    for row in fixable:
+        print "%s,%s,%s -> %s" % (
+            unicode(row[0], 'utf8', errors='replace'), row[1], row[2], row[3])
+    if not args.dry_run:
+        fix_broken_aliases(db, fixable)
+
+
+if __name__ == '__main__':
+    main()
