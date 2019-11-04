@@ -56,6 +56,10 @@ def crawl_account_containers(api, account,
             continue
         bucket, shard = cname.split('%2F', 1)
         shard = unquote(shard) + '/'
+        if not ct[1]:
+            print('Found EMTPY shard "%s" of bucket %s from account %s' % (
+                  shard, bucket, account))
+            continue
         print('Found shard "%s" of bucket %s from account %s' % (
               shard, bucket, account), end='')
         if compare_to is not None:
